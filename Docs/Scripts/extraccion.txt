@@ -1,0 +1,276 @@
+
+-- TABLA: adsl2_contrato
+
+SELECT * 
+FROM adsl2_contrato
+LIMIT 10;
+
+
+-- TABLA: clientes
+SELECT * 
+FROM clientes
+LIMIT 10000;
+
+
+-- TABLA: servicios (exploración inicial)
+
+SELECT * 
+FROM servicios
+LIMIT 10;
+
+
+
+-- TABLA: servicios_cliente
+-- Descripción: Vista consolidada de servicios contratados por cliente
+-- Propósito: Unir información de clientes con sus contratos activos/inactivos,
+--            incluye plan comercial, forma de pago, dirección del servicio,
+--            estado del contrato y tipo de servicio (1=Telefonía, 2=TV, 3=Internet)
+-- Campos clave: contrato, cod_cliente, plan_comercial, forma_pago, anulado,
+--               cod_estado_contrato, cod_servicio
+-- 
+SELECT * FROM servicios_cliente LIMIT 5;
+
+
+-- Consulta de ejemplo: Servicios de un cliente específico por CI
+SELECT sc.contrato, sc.cod_servicio, c.nombres, c.nro_documento
+FROM servicios_cliente sc
+JOIN clientes c
+  ON sc.cod_cliente = c.cod_cliente
+WHERE c.nro_documento = '2280845';
+
+
+-- Consulta completa: Información detallada de servicios por cliente
+SELECT 
+    c.cod_cliente,
+    c.nombres,
+    c.nro_documento,
+    sc.contrato,
+    sc.cod_servicio,
+    sc.plan_comercial,
+    sc.forma_pago,
+    sc.direccion,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    sc.concesion,
+    sc.ampliacion,
+    sc.cod_acci_contrato
+FROM clientes c
+JOIN servicios_cliente sc
+  ON c.cod_cliente = sc.cod_cliente
+WHERE c.nro_documento = '2280845';
+
+
+-- ----------------------------------------------------------------------------
+-- TABLA: cobfactu
+-- Descripción: Facturación mensual de todos los servicios de COTEL
+-- Propósito: Análisis de comportamiento de pago, morosidad, ARPU (Average 
+--            Revenue Per User), patrones de facturación para predicción de churn
+-- Campos clave: factura_interna, contrato, periodo, fecha_emision, monto_total,
+--               estado (G=Generado, P=Pagado, NP=No Pagado), cod_concesion
+-- Filtros importantes: cod_concesion IN (1,2,3,5,6,7,12,14,20,61) para 
+--                      facturas válidas de servicios activos
+-- ----------------------------------------------------------------------------
+SELECT *
+FROM cobfactu
+LIMIT 10;
+
+
+-- Consulta: Facturas pendientes de un contrato específico
+SELECT *
+FROM cobfactu
+WHERE contrato = 89004747
+  AND estado IN ('G', 'NP')
+  AND cod_concesion IN (1,2,3,5,6,7,14,20,12,61);
+
+
+-- Consulta: Deuda total acumulada por contrato
+SELECT 
+    contrato,
+    SUM(monto_total) AS total_debe
+FROM cobfactu
+WHERE contrato = 92011986
+  AND estado IN ('G','NP')               -- solo facturas válidas (no pagadas)
+  AND cod_concesion IN (1,2,3,5,6,7,12,14,20,61)
+GROUP BY contrato;
+
+
+-- Consulta: Detalle de facturas pendientes ordenadas por fecha
+SELECT 
+    contrato,
+    factura_interna,
+    fecha_emision,
+    monto_total,
+    estado,
+    cod_concesion
+FROM cobfactu
+WHERE contrato = 92011986
+  AND estado IN ('G','NP')   -- facturas activas (pendientes de pago)
+  AND cod_concesion IN (1,2,3,5,6,7,12,14,20,61)
+ORDER BY fecha_emision DESC;
+
+
+-- ----------------------------------------------------------------------------
+-- CONSULTAS INTEGRADAS: Unión de múltiples tablas
+-- Descripción: Consultas que combinan clientes, servicios y facturación para
+--              obtener una vista completa del comportamiento del cliente
+-- ----------------------------------------------------------------------------
+
+-- Consulta: Servicios y facturas de un cliente por CI
+SELECT 
+    sc.contrato,
+    sc.cod_servicio,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    cf.factura_interna,
+    cf.fecha_emision,
+    cf.monto_total,
+    cf.estado
+FROM servicios_cliente sc
+JOIN clientes c
+  ON c.cod_cliente = sc.cod_cliente
+LEFT JOIN cobfactu cf
+  ON cf.contrato = sc.contrato
+WHERE c.nro_documento = '2280845'
+  AND cf.estado IN ('G','NP')
+  AND cf.cod_concesion IN (1,2,3,5,6,7,12,14,20,61)
+ORDER BY sc.contrato, cf.fecha_emision DESC;
+
+
+-- Consulta: Resumen de servicios con cantidad y monto total de facturas pendientes
+SELECT 
+    c.cod_cliente,
+    c.nombres,
+    c.nro_documento,
+    sc.contrato,
+    sc.cod_servicio,
+    sc.plan_comercial,
+    sc.forma_pago,
+    sc.direccion,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    sc.concesion,
+    sc.ampliacion,
+    sc.cod_acci_contrato,
+    COUNT(cf.factura_interna) AS cantidad_facturas,
+    SUM(cf.monto_total) AS total_monto
+FROM clientes c
+JOIN servicios_cliente sc
+  ON c.cod_cliente = sc.cod_cliente
+LEFT JOIN cobfactu cf
+  ON cf.contrato = sc.contrato::NUMERIC   -- cast necesario para JOIN
+ AND cf.estado IN ('G','NP')
+ AND cf.cod_concesion IN (1,2,3,5,6,7,14,20,12,61)
+WHERE c.nro_documento = '2280845'
+GROUP BY 
+    c.cod_cliente, c.nombres, c.nro_documento,
+    sc.contrato, sc.cod_servicio, sc.plan_comercial, sc.forma_pago,
+    sc.direccion, sc.cod_estado_contrato, sc.anulado, sc.concesion,
+    sc.ampliacion, sc.cod_acci_contrato;
+
+
+-- Consulta simplificada: Deuda por contrato de un cliente específico
+SELECT  
+    sc.contrato,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    SUM(cf.monto_total) AS total_monto
+FROM clientes c
+JOIN servicios_cliente sc
+  ON c.cod_cliente = sc.cod_cliente
+LEFT JOIN cobfactu cf
+  ON cf.contrato = sc.contrato::NUMERIC
+ AND cf.estado IN ('G','NP')
+ AND cf.cod_concesion IN (1,2,3,5,6,7,14,20,12,61)
+WHERE c.nro_documento = '2280845'
+GROUP BY 
+    sc.contrato, sc.cod_estado_contrato, sc.anulado;
+
+
+-- Consulta optimizada con subconsulta: Evita problemas de performance en JOIN
+SELECT  
+    sc.contrato,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    SUM(cf.monto_total) AS total_monto
+FROM (
+    SELECT cod_cliente, contrato, cod_estado_contrato, anulado
+    FROM servicios_cliente sc
+    JOIN clientes c ON sc.cod_cliente = c.cod_cliente
+    WHERE c.nro_documento = '2280845'
+) sc
+LEFT JOIN cobfactu cf
+  ON cf.contrato = sc.contrato
+ AND cf.estado IN ('G','NP')
+ AND cf.cod_concesion IN (1,2,3,5,6,7,14,20,12,61)
+GROUP BY sc.contrato, sc.cod_estado_contrato, sc.anulado;
+
+
+-- ----------------------------------------------------------------------------
+-- CONSULTAS DE ANÁLISIS: Exploratorias para entender la estructura de datos
+-- ----------------------------------------------------------------------------
+
+-- Consulta: Información de un contrato específico
+SELECT *
+FROM servicios_cliente
+WHERE contrato = '81008450';
+
+
+-- Consulta: Distribución de planes comerciales en contratos activos
+SELECT plan_comercial, COUNT(*) AS cantidad_servicios
+FROM servicios_cliente
+WHERE cod_estado_contrato = 'ACTIVO'
+GROUP BY plan_comercial;
+
+
+-- Consulta: Servicios por tipo con resumen de facturación de un cliente
+SELECT 
+    a.contrato,
+    CASE a.cod_servicio::INT
+        WHEN 1 THEN 'TELEFONIA'
+        WHEN 2 THEN 'TVCABLE'
+        WHEN 3 THEN 'INTERNET'
+        WHEN 9 THEN 'PAQUETE'
+        ELSE 'OTRO'
+    END AS servicio,
+    a.anulado,
+    COUNT(cf.factura_interna) AS cantidad_facturas,
+    SUM(cf.monto_total) AS total_monto
+FROM clientes ab
+JOIN servicios_cliente a 
+    ON a.cod_cliente = ab.cod_cliente
+LEFT JOIN cobfactu cf
+    ON cf.contrato = a.contrato
+   AND cf.estado IN ('G','NP')
+   AND cf.cod_concesion IN (1, 2, 3, 5, 6, 7, 14, 20, 12, 61)
+WHERE ab.nro_documento = '2280845'
+GROUP BY a.contrato, a.cod_servicio, a.anulado;
+
+
+-- Consulta: Resumen de todos los contratos de clientes específicos con subconsulta
+SELECT 
+    sc.contrato,
+    sc.cod_estado_contrato,
+    sc.anulado,
+    COUNT(cf.factura_interna) AS cantidad_facturas,
+    SUM(cf.monto_total) AS total_monto
+FROM (
+    SELECT contrato, cod_estado_contrato, anulado, cod_cliente
+    FROM servicios_cliente
+    WHERE cod_cliente IN (
+        SELECT cod_cliente
+        FROM clientes
+        WHERE nro_documento = '2280845'
+    )
+) sc
+LEFT JOIN cobfactu cf
+  ON cf.contrato = sc.contrato
+ AND cf.estado IN ('G','NP')
+ AND cf.cod_concesion IN (1,2,3,5,6,7,14,20,12,61)
+GROUP BY sc.contrato, sc.cod_estado_contrato, sc.anulado
+ORDER BY sc.contrato;
+
+
+-- Consulta: Verificación de estructura de tabla servicios_cliente
+SELECT * 
+FROM servicios_cliente 
+LIMIT 1;
